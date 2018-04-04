@@ -8,12 +8,18 @@
 
 #import "RCTB64ImageAsset.h"
 #import <Photos/Photos.h>
+#import <React/RCTConvert.h>
 
 static NSString *const kErrorNoAssetWithIdentifier = @"E_NO_ASSET_WITH_IDENTIFIER";
 static NSString *const kErrorMediaSubtypeNotHandled = @"E_MEDIA_SUBTYPE_NOT_HANDLED";
 static NSString *const kErrorUnableToWriteAsset = @"E_UNABLE_TO_WRITE_ASSET";
 static NSString *const kErrorLivePhotoRessourceImageNotFound = @"E_LIVE_PHOTO_RESSOURCE_IMAGE_NOT_FOUND";
 static NSString *const kErrorNotAnImage = @"E_NOT_AN_IMAGE";
+static NSString *const kErrorMissingLocalIdentifier = @"E_MISSING_LOCAL_IDENTIFIER";
+
+static NSString *const _localIdentifier = @"localIdentifier";
+static NSString *const _still = @"still";
+
 
 
 @interface RCTB64ImageAsset()
@@ -34,14 +40,26 @@ static NSString *const kErrorNotAnImage = @"E_NOT_AN_IMAGE";
 
 RCT_EXPORT_MODULE()
 
-RCT_EXPORT_METHOD(readB64Image:(NSString *)localidentifier resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(readB64Image:(NSDictionary *)options resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
     self.rejecter = reject;
     self.resolver = resolve;
     
-    NSArray *identifiers = [[NSArray alloc] initWithObjects:localidentifier, nil];
-    PHFetchResult *assetsFetchResult = [PHAsset fetchAssetsWithLocalIdentifiers:identifiers options:nil];
+    NSString *localIdentifier;
+    BOOL still = NO;
     
+    if (options[_localIdentifier]) {
+        localIdentifier = [RCTConvert NSString:options[_localIdentifier]];
+    }else{
+        return [self rejectAndReset:kErrorMissingLocalIdentifier withMessage:@"Missing localIdentifier" withError:nil];
+    }
+    
+    if (options[_still]) {
+        still = [RCTConvert BOOL:options[_still]];
+    }
+    
+    NSArray *identifiers = [[NSArray alloc] initWithObjects:localIdentifier, nil];
+    PHFetchResult *assetsFetchResult = [PHAsset fetchAssetsWithLocalIdentifiers:identifiers options:nil];
     PHAsset *asset  = [assetsFetchResult firstObject];
     
     if(!asset){
@@ -54,19 +72,27 @@ RCT_EXPORT_METHOD(readB64Image:(NSString *)localidentifier resolver:(RCTPromiseR
     
     switch(asset.mediaSubtypes){
         case PHAssetMediaSubtypePhotoLive:
-            [self handleLivePhoto:asset];
+            if(still){
+                [self handleLivePhoto:asset];
+            }else{
+                [self handlePhoto:asset];
+            }
             break;
+        case PHAssetMediaSubtypePhotoHDR:
+        case PHAssetMediaSubtypePhotoScreenshot:
         case PHAssetMediaSubtypeNone:
             [self handlePhoto:asset];
             break;
-        case PHAssetMediaSubtypePhotoHDR:
-            [self handlePhoto:asset];
-            break;
-        case PHAssetMediaSubtypePhotoScreenshot:
-            [self handlePhoto:asset];
-            break;
         default:
-            return [self rejectAndReset:kErrorMediaSubtypeNotHandled withMessage:[NSString stringWithFormat:@"UNKNOWN %ld",(long)asset.mediaSubtypes] withError:nil];
+            if (@available(iOS 10.2, *)) {
+                if(asset.mediaSubtypes == PHAssetMediaSubtypePhotoDepthEffect){
+                    [self handlePhoto:asset];
+                }else{
+                    [self rejectAndReset:kErrorMediaSubtypeNotHandled withMessage:[NSString stringWithFormat:@"UNKNOWN %ld",(long)asset.mediaSubtypes] withError:nil];
+                }
+            } else {
+                [self rejectAndReset:kErrorMediaSubtypeNotHandled withMessage:[NSString stringWithFormat:@"UNKNOWN %ld",(long)asset.mediaSubtypes] withError:nil];
+            }
             break;
     }
 }
@@ -74,7 +100,6 @@ RCT_EXPORT_METHOD(readB64Image:(NSString *)localidentifier resolver:(RCTPromiseR
 -(void)handlePhoto:(PHAsset*) asset
 {
     PHImageRequestOptions *options = [PHImageRequestOptions new];
-    options.synchronous = YES;
     options.version = PHImageRequestOptionsVersionCurrent;
     options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
     
@@ -104,7 +129,7 @@ RCT_EXPORT_METHOD(readB64Image:(NSString *)localidentifier resolver:(RCTPromiseR
             }
         }];
     }else{
-        [self rejectAndReset:kErrorLivePhotoRessourceImageNotFound withMessage:@"" withError:nil];
+        [self rejectAndReset:kErrorLivePhotoRessourceImageNotFound withMessage:@"Still image not found" withError:nil];
     }
 }
 
